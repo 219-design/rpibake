@@ -1,0 +1,5 @@
+Q_DTB=$ROOT_DIR/binaries/versatile-pb-buster-5.4.51.dtb
+Q_KERNEL=$ROOT_DIR/binaries/kernel-qemu-4.19.50-buster
+Q_IMG=$ROOT_DIR/binaries/2020-08-20-raspios-buster-armhf-lite.img
+Q_HOST_SSH_PORT=5022
+Q_IDENTITY_SSH=$ROOT_DIR/.user/id_rsa

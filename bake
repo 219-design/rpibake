@@ -1,0 +1,41 @@
+#!/bin/bash
+set -euo pipefail
+IFS=$'\n\t'
+
+export ROOT_DIR=$(readlink -f $PWD)
+
+function help() {
+    echo "bake <command>"
+    echo "  command"
+    echo "    init   Install host system prerequisites to run QEMU."
+    echo "    mount  Mount the image and store SSH installer into image."
+    echo "    qemu   Run Raspberry Pi OS in QEMU."
+    echo "    ssh    SSH into the guest system."
+    exit -1
+}
+
+if [ "$#" -lt 1 ]; then
+    echo "Missing command argument."
+    help
+fi
+COMMAND=$1
+shift
+
+case $COMMAND in
+    init)
+        ./scripts/init.sh $@
+        ;;
+    mount)
+        ./scripts/mount.sh $@
+        ;;
+    qemu)
+        ./scripts/qemu.sh $@
+        ;;
+    ssh)
+        ./scripts/ssh.sh $@
+        ;;
+    *)
+        echo "Unknown command \"${COMMAND}\"."
+        help
+        ;;
+esac

@@ -2,7 +2,7 @@
 set -euox pipefail
 IFS=$'\n\t'
 
-source vars
+source $ROOT_DIR/scripts/vars
 
 sudo qemu-system-arm \
     -M versatilepb \
