@@ -10,11 +10,14 @@ function pipe_in() {
         -p $Q_HOST_SSH_PORT \
         -i $Q_IDENTITY_SSH \
         -o ConnectTimeout=0 \
+        -o StrictHostKeyChecking=no \
         $@ \
     ;
 }
 
-until pipe_in
-do
-    sleep 5
-done
+# until pipe_in $@
+# do
+#     sleep 5
+# done
+
+pipe_in $@

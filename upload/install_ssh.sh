@@ -3,11 +3,30 @@ set -euox pipefail
 IFS=$'\n\t'
 
 echo "Install SSH server."
-sudo apt-get install -y openssh-server
+apt-get install -y openssh-server
 
 echo "Open port to handle SSH."
-sudo rasp-config nonint do_ssh 0
+raspi-config nonint do_ssh 0
+
+echo "Disable password login."
+function comment() {
+    sed -re "s:^($1\s+):# \1:" -i /etc/ssh/sshd_config
+}
+comment ChallengeResponseAuthentication
+comment PasswordAuthentication
+comment UsePAM
+comment PermitRootLogin
+
+cat >>/etc/ssh/sshd_config <<EOF
+ChallengeResponseAuthentication no
+PasswordAuthentication no
+UsePAM no
+PermitRootLogin no
+EOF
+
+echo "Reload SSH configuration to actually disable password logins."
+systemctl reload ssh
 
 echo "Uninstall the SSH installer service."
-sudo rm -f /lib/systemd/system/install_ssh.service
-sudo systemctl daemon-reload
+rm -f /lib/systemd/system/install_ssh.service
+systemctl daemon-reload
