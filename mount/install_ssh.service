@@ -1,9 +1,0 @@
-[Unit]
-Description=Install SSH server.
-
-[Service]
-Type=oneshot
-ExecStart=/home/pi/upload/install_ssh_sudo.sh
-
-[Install]
-WantedBy=multi-user.target

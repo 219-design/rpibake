@@ -17,10 +17,3 @@ sudo qemu-system-arm \
     -kernel $Q_KERNEL \
     -no-reboot \
 ;
-    # -daemonize \
-    # -serial stdio \
-
-    # -device e1000,netdev=net0 \
-    # -netdev user,id=net0,hostfwd=tcp::$Q_HOST_SSH_PORT-:22 \
-
-    # -netdev user,id=net0,hostfwd=tcp::$Q_HOST_SSH_PORT-:22 \

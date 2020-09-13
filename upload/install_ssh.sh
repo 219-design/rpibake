@@ -2,6 +2,8 @@
 set -euox pipefail
 IFS=$'\n\t'
 
+whoami
+
 echo "Install SSH server."
 apt-get install -y openssh-server
 
@@ -28,5 +30,4 @@ echo "Reload SSH configuration to actually disable password logins."
 systemctl reload ssh
 
 echo "Uninstall the SSH installer service."
-rm -f /lib/systemd/system/install_ssh.service
-systemctl daemon-reload
+mv -f /etc/rc.local.original /etc/rc.local

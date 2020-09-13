@@ -1,0 +1,5 @@
+#!/bin/sh -e
+
+/home/pi/upload/install_ssh.sh
+
+exit 0

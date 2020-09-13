@@ -36,6 +36,7 @@ sudo mkdir -p $PART_USER/home/pi/.ssh
 sudo cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
 
 echo "Install SSH server installer."
-sudo cp mount/install_ssh.service $PART_USER/lib/systemd/system/
+sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
+sudo cp mount/rc.local $PART_USER/etc/
 
 echo "Success!"
