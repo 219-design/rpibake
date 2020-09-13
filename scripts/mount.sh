@@ -16,6 +16,7 @@ function unmount_disks() {
     echo "Unmount disk."
     sudo umount $PART_BOOT
     sudo umount $PART_USER
+    sudo losetup -d $LOOPBACK
 }
 trap unmount_disks EXIT
 
