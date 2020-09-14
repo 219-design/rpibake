@@ -4,13 +4,15 @@ IFS=$'\n\t'
 
 export ROOT_DIR=$(readlink -f $PWD)
 
+source $ROOT_DIR/vars
+
 function help() {
     echo "bake <command>"
     echo "  command"
-    echo "    init   Install host system prerequisites to run QEMU."
-    echo "    mount  Mount the image and store SSH installer into image."
-    echo "    qemu   Run Raspberry Pi OS in QEMU."
-    echo "    ssh    SSH into the guest system."
+    echo "    prerequisites  Install host system prerequisites to run QEMU."
+    echo "    mount          Mount the image and store SSH installer into image."
+    echo "    qemu           Run Raspberry Pi OS in QEMU."
+    echo "    ssh            SSH into the guest system."
     exit -1
 }
 
@@ -21,18 +23,91 @@ fi
 COMMAND=$1
 shift
 
+function stage_prerequisites() {
+    sudo apt-get -y install \
+        qemu-system-arm \
+        qemu-user \
+    ;
+}
+
+function stage_mount() {
+    echo "Mount disk."
+    LOOPBACK=$(sudo losetup -f)
+    sudo losetup -P $LOOPBACK $Q_IMG
+    PART_BOOT=$(mktemp -d)
+    PART_USER=$(mktemp -d)
+    sudo mount ${LOOPBACK}p1 $PART_BOOT
+    sudo mount ${LOOPBACK}p2 $PART_USER
+
+    function unmount_disks() {
+        echo "Unmount disk."
+        sudo umount $PART_BOOT
+        sudo umount $PART_USER
+        sudo losetup -d $LOOPBACK
+    }
+    trap unmount_disks EXIT
+
+    echo "Generate custom SSH key."
+    if [[ -f .user/id_rsa ]]
+    then
+        echo "Key exists, not regenerating."
+    else
+        mkdir -p .user/
+        ssh-keygen -b 4096 -t rsa -f .user/id_rsa -q -N ""
+    fi
+
+    echo "Install SSH keys."
+    sudo mkdir -p $PART_USER/home/pi/.ssh
+    sudo cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
+
+    echo "Install SSH server installer."
+    sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
+    sudo cp mount/rc.local $PART_USER/etc/
+}
+
+function stage_qemu() {
+    sudo qemu-system-arm \
+        -M versatilepb \
+        -cpu arm1176 \
+        -m 256 \
+        -append "root=/dev/sda2 rootfstype=ext4 rw" \
+        -net nic \
+        -net user,hostfwd=tcp::$Q_HOST_SSH_PORT-:22 \
+        -net tap,ifname=vnet0,script=no,downscript=no \
+        -drive file=$Q_IMG,format=raw \
+        -dtb $Q_DTB \
+        -kernel $Q_KERNEL \
+        -no-reboot \
+    ;
+}
+
+function stage_ssh() {
+    function pipe_in() {
+        ssh \
+            pi@localhost \
+            -p $Q_HOST_SSH_PORT \
+            -i $Q_IDENTITY_SSH \
+            -o ConnectTimeout=0 \
+            -o StrictHostKeyChecking=no \
+            $@ \
+        ;
+    }
+
+    pipe_in $@
+}
+
 case $COMMAND in
-    init)
-        ./scripts/init.sh $@
+    prerequisites)
+        stage_prerequisites $@
         ;;
     mount)
-        ./scripts/mount.sh $@
+        stage_mount $@
         ;;
     qemu)
-        ./scripts/qemu.sh $@
+        stage_qemu $@
         ;;
     ssh)
-        ./scripts/ssh.sh $@
+        stage_ssh $@
         ;;
     *)
         echo "Unknown command \"${COMMAND}\"."

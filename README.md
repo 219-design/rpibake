@@ -6,7 +6,7 @@
 
 The items in the binary folder are from [this repository](https://github.com/dhruvvyas90/qemu-rpi-kernel).
 
-Set the variables in `scripts/vars` appropriately.
+Set the variables in `vars` appropriately.
 
 #### Workflow
 
