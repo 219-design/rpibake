@@ -17,7 +17,7 @@ If you want to manually modify the disk image the way to do it is to take the va
 ./bake qemu
 ```
 
-In another terminal you can then SSH into machine as it is running in QEMU.
+In another terminal you can then SSH into the machine as it is running in QEMU.
 
 ```bash
 ./bake ssh
