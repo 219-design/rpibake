@@ -1,4 +1,6 @@
-#!/bin/sh -e
+#!/bin/bash
+set -euo pipefail
+IFS=$'\n\t'
 
 echo "Install SSH server."
 apt-get install -y openssh-server
