@@ -93,6 +93,7 @@ function stage_ssh() {
             -p $Q_HOST_SSH_PORT \
             -i $Q_IDENTITY_SSH \
             -o StrictHostKeyChecking=no \
+            -o 'ConnectionAttempts 1000' \
             $@ \
         ;
     }
