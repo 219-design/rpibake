@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-export ROOT_DIR=$(readlink -f $PWD)
+ROOT_DIR="$(dirname $(readlink -f "${BASH_SOURCE[0]}"))"
 
 source $ROOT_DIR/vars
 
@@ -63,7 +63,7 @@ function stage_mount() {
 
     echo "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
-    sudo cp mount/rc.local $PART_USER/etc/
+    sudo cp $ROOT_DIR/mount/rc.local $PART_USER/etc/
 }
 
 function stage_qemu() {
