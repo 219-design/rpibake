@@ -98,6 +98,21 @@ function stage_ssh() {
         ;
     }
 
+    function pipe_exit() {
+        pipe_in -T <<EOF
+exit
+EOF
+    }
+
+    function pipe_until() {
+        until pipe_exit
+        do
+            true
+        done
+    }
+
+    # Continually try to SSH in until it succeeds then SSH for real.
+    pipe_until
     pipe_in $@
 }
 
