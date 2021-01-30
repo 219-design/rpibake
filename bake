@@ -6,23 +6,68 @@ ROOT_DIR="$(dirname $(readlink -f "${BASH_SOURCE[0]}"))"
 
 source $ROOT_DIR/vars
 
+CLIENT_USER=pi
+CLIENT_HOSTNAME=localhost
+CLIENT_SSH_ORIGIN=${CLIENT_USER}@${CLIENT_HOSTNAME}
+CLIENT_SSH_PORT=${Q_HOST_SSH_PORT}
+CLIENT_RSYNC_SSH_ORIGIN=${CLIENT_SSH_ORIGIN}
+
+function debug() {
+    echo $@ 1>&2
+}
+
 function help() {
-    echo "bake <command>"
-    echo "  command"
-    echo "    prerequisites  Install host system prerequisites to run QEMU."
-    echo "    mount          Mount the image and store SSH installer into image."
-    echo "    qemu           Run Raspberry Pi OS in QEMU."
-    echo "    ssh            SSH into the guest system."
-    echo "    halt           SSH into the guest system and turn it off."
+    debug "bake <command>"
+    debug "  command"
+    debug "    prerequisites  Install host system prerequisites to run QEMU."
+    debug "    mount          Mount the image and store SSH installer into image."
+    debug "    qemu           Run Raspberry Pi OS in QEMU."
+    debug "    wait           Wait until SSH succeeds."
+    debug "    ssh            SSH into the guest system."
+    debug "    rsync"
+    debug "      ssh          Invoke rsync over SSH."
+    debug "    halt           SSH into the guest system and turn it off."
+    debug "    get"
+    debug "      user         Get the client user name."
+    debug "      ssh"
+    debug "        origin     Get the SSH destination user@hostname."
+    debug "        port       Get the SSH port."
     exit -1
 }
 
-if [ "$#" -lt 1 ]; then
-    echo "Missing command argument."
-    help
-fi
-COMMAND=$1
-shift
+function pipe_ssh() {
+    set +e
+    trap "set -e" RETURN
+
+    ssh \
+        ${CLIENT_SSH_ORIGIN} \
+        -p ${Q_HOST_SSH_PORT} \
+        -i $Q_IDENTITY_SSH \
+        -o StrictHostKeyChecking=no \
+        -o 'ConnectionAttempts 1000' \
+        $@ \
+    ;
+}
+
+function pipe_ssh_exit() {
+    pipe_ssh -T <<EOF
+exit
+EOF
+}
+
+function pipe_wait() {
+    until pipe_ssh_exit
+    do
+        true
+    done
+}
+
+function pipe_rsync_ssh() {
+    set +e
+    trap "set -e" RETURN
+
+    rsync -e "ssh -p ${CLIENT_SSH_PORT} -i ${Q_IDENTITY_SSH}" $@
+}
 
 function stage_prerequisites() {
     sudo apt-get -y install \
@@ -32,7 +77,7 @@ function stage_prerequisites() {
 }
 
 function stage_mount() {
-    echo "Mount disk."
+    debug "Mount disk."
     LOOPBACK=$(sudo losetup -f)
     sudo losetup -P $LOOPBACK $Q_IMG
     PART_BOOT=$(mktemp -d)
@@ -41,27 +86,27 @@ function stage_mount() {
     sudo mount ${LOOPBACK}p2 $PART_USER
 
     function unmount_disks() {
-        echo "Unmount disk."
+        debug "Unmount disk."
         sudo umount $PART_BOOT
         sudo umount $PART_USER
         sudo losetup -d $LOOPBACK
     }
     trap unmount_disks EXIT
 
-    echo "Generate custom SSH key."
+    debug "Generate custom SSH key."
     if [[ -f .user/id_rsa ]]
     then
-        echo "Key exists, not regenerating."
+        debug "Key exists, not regenerating."
     else
         mkdir -p .user/
         ssh-keygen -b 4096 -t rsa -f .user/id_rsa -q -N ""
     fi
 
-    echo "Install SSH keys."
+    debug "Install SSH keys."
     sudo mkdir -p $PART_USER/home/pi/.ssh
     sudo cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
 
-    echo "Install SSH server installer."
+    debug "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
     sudo cp $ROOT_DIR/mount/rc.local $PART_USER/etc/
 }
@@ -83,59 +128,118 @@ function stage_qemu() {
     ;
 }
 
-function stage_ssh() {
-    function pipe_in() {
-        set +e
-        trap "set -e" RETURN
-
-        ssh \
-            pi@localhost \
-            -p $Q_HOST_SSH_PORT \
-            -i $Q_IDENTITY_SSH \
-            -o StrictHostKeyChecking=no \
-            -o 'ConnectionAttempts 1000' \
-            $@ \
-        ;
-    }
-
-    function pipe_exit() {
-        pipe_in -T <<EOF
-exit
-EOF
-    }
-
-    function pipe_until() {
-        until pipe_exit
-        do
-            true
-        done
-    }
-
-    # Continually try to SSH in until it succeeds then SSH for real.
-    pipe_until
-    pipe_in $@
+function stage_wait() {
+    pipe_wait $@
 }
 
-case $COMMAND in
-    prerequisites)
-        stage_prerequisites $@
-        ;;
-    mount)
-        stage_mount $@
-        ;;
-    qemu)
-        stage_qemu $@
-        ;;
-    ssh)
-        stage_ssh $@
-        ;;
-    halt)
-        stage_ssh $@ <<EOF
+function stage_ssh() {
+    pipe_ssh $@
+}
+
+function stage_rsync() {
+    if [ "$#" -lt 1 ]; then
+        debug "Missing rsync argument."
+        help
+    fi
+    COMMAND=$1
+    shift
+    case ${COMMAND} in
+        ssh)
+            stage_rsync_ssh $@
+            ;;
+        *)
+            debug "Unknown rsync command \"${COMMAND}\"."
+            help
+            ;;
+    esac
+}
+
+function stage_rsync_ssh() {
+    pipe_rsync_ssh $@
+}
+
+function stage_halt() {
+    stage_ssh $@ <<EOF
 sudo reboot
 EOF
-        ;;
-    *)
-        echo "Unknown command \"${COMMAND}\"."
+}
+
+function stage_get() {
+    if [ "$#" -lt 1 ]; then
+        debug "Missing get argument."
         help
-        ;;
-esac
+    fi
+    COMMAND=$1
+    shift
+    case ${COMMAND} in
+        user)
+            echo ${CLIENT_USER}
+            ;;
+        ssh)
+            if [ "$#" -lt 1 ]; then
+                debug "Missing get ssh argument."
+                help
+            fi
+            COMMAND=$1
+            shift
+            case ${COMMAND} in
+                origin)
+                    echo ${CLIENT_SSH_ORIGIN}
+                    ;;
+                port)
+                    echo ${CLIENT_SSH_PORT}
+                    ;;
+                *)
+                    debug "Unknown get ssh origin command \"${COMMAND}\"."
+                    help
+                    ;;
+            esac
+            ;;
+        *)
+            debug "Unknown get subcommand \"${COMMAND}\"."
+            help
+            ;;
+    esac
+}
+
+
+function stage_main() {
+    if [ "$#" -lt 1 ]; then
+        debug "Missing argument."
+        help
+    fi
+    COMMAND=$1
+    shift
+    case ${COMMAND} in
+        prerequisites)
+            stage_prerequisites $@
+            ;;
+        mount)
+            stage_mount $@
+            ;;
+        qemu)
+            stage_qemu $@
+            ;;
+        wait)
+            stage_wait $@
+            ;;
+        ssh)
+            stage_ssh $@
+            ;;
+        rsync)
+            stage_rsync $@
+            ;;
+        halt)
+            stage_halt $@
+            ;;
+        get)
+            stage_get $@
+            ;;
+        *)
+            debug "Unknown command \"${COMMAND}\"."
+            help
+            ;;
+    esac
+}
+
+stage_main $@
