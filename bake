@@ -6,6 +6,7 @@ ROOT_DIR="$(dirname $(readlink -f "${BASH_SOURCE[0]}"))"
 
 STATUS=$ROOT_DIR/.status
 RPIBAKE=rpibake
+PI_UID=1000 # The user id of the regular Raspberry Pi user, pi.
 
 source $ROOT_DIR/vars
 
@@ -266,8 +267,8 @@ function stage_image_init() {
     image_variable_get
 
     debug "Install SSH keys."
-    sudo mkdir -p $PART_USER/home/pi/.ssh
-    sudo cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
+    sudo -u \#$PI_UID mkdir -p $PART_USER/home/pi/.ssh
+    sudo -u \#$PI_UID cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
 
     debug "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
