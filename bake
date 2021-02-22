@@ -17,28 +17,27 @@ function debug() {
 }
 
 function help() {
-    debug "bake <command>"
-    debug "  command"
-    debug "    prerequisites  Install host system prerequisites to run QEMU."
-    debug "    mount          Mount the image and store SSH installer into image."
-    debug "    qemu           Run Raspberry Pi OS in QEMU."
-    debug "    wait           Wait until SSH succeeds."
-    debug "    ssh            SSH into the guest system."
-    debug "    rsync"
-    debug "      ssh          Invoke rsync over SSH."
-    debug "    halt           SSH into the guest system and turn it off."
-    debug "    get"
-    debug "      user         Get the client user name."
-    debug "      ssh"
-    debug "        origin     Get the SSH destination user@hostname."
-    debug "        port       Get the SSH port."
+    debug "bake"
+    debug "  prerequisites      Install host system prerequisites to run QEMU."
+    debug "  image"
+    debug "    expand BYTES     Expand the disk image to a given size in bytes."
+    debug "  mount              Mount the image and store SSH installer into image."
+    debug "  qemu               Run Raspberry Pi OS in QEMU."
+    debug "  wait               Wait until SSH succeeds."
+    debug "  ssh                SSH into the guest system."
+    debug "  rsync"
+    debug "    ssh              Invoke rsync over SSH."
+    debug "  halt               SSH into the guest system and turn it off."
+    debug "  get"
+    debug "    user             Get the client user name."
+    debug "    ssh"
+    debug "      origin         Get the SSH destination user@hostname."
+    debug "      port           Get the SSH port."
     exit -1
 }
 
 function pipe_ssh() {
     set +e
-    trap "set -e" RETURN
-
     ssh \
         ${CLIENT_SSH_ORIGIN} \
         -p ${Q_HOST_SSH_PORT} \
@@ -47,6 +46,9 @@ function pipe_ssh() {
         -o 'ConnectionAttempts 1000' \
         $@ \
     ;
+    RETCODE=$?
+    set -e
+    return $RETCODE
 }
 
 function pipe_ssh_exit() {
@@ -63,10 +65,23 @@ function pipe_wait() {
 }
 
 function pipe_rsync_ssh() {
-    set +e
-    trap "set -e" RETURN
-
     rsync -e "ssh -p ${CLIENT_SSH_PORT} -i ${Q_IDENTITY_SSH}" $@
+}
+
+function trim() {
+    echo "$1" | sed -re 's/^[\t\r\n ]*//' | sed -re 's/[\t\r\n ]*$//'
+}
+
+function partition_count() {
+    IMG=$1
+    partx $IMG -g | wc -l
+}
+
+function partition_query() {
+    IMG=$1
+    PARTITION=$2
+    FIELD=$3
+    trim "$(partx $IMG --bytes -g -n $PARTITION -o $FIELD)"
 }
 
 function stage_prerequisites() {
@@ -76,12 +91,121 @@ function stage_prerequisites() {
     ;
 }
 
-function stage_mount() {
-    debug "Mount disk."
+function stage_image() {
+    if [ "$#" -lt 1 ]; then
+        debug "Missing image argument."
+        help
+    fi
+    COMMAND=$1
+    shift
+    case ${COMMAND} in
+        expand)
+            stage_image_expand $@
+            ;;
+        *)
+            debug "Unknown image command \"${COMMAND}\"."
+            help
+            ;;
+    esac
+}
+
+function stage_image_expand() {
+    DISK_SIZE=$1
+    shift
+
+    SECTOR_SIZE=512
+
+    # Verify that the new disk size is in a multiple of the sector size.
+    if [ "0" -ne $(( ${DISK_SIZE} % ${SECTOR_SIZE})) ]
+    then
+        debug "The specified disk size ${DISK_SIZE} is not divisible by the sector size ${SECTOR_SIZE}."
+        exit -1
+    fi
+
+    # Verify that the image contains exactly partitions 1 and 2.
+    COUNT_PARTITION=$(partition_count ${Q_IMG})
+    if [ 2 -ne $COUNT_PARTITION ]
+    then
+        debug "Expected to find 2 partitions."
+        exit -1
+    fi
+    for i in $(seq $COUNT_PARTITION)
+    do
+        case "$i" in
+        1) # This should map to the boot partition.
+            ;&
+        2) # This should map to the main partition.
+            debug "Partition $i"
+            debug "start    $(partition_query ${Q_IMG} $i START)s"
+            debug "end      $(partition_query ${Q_IMG} $i END)s"
+            debug "sectors  $(partition_query ${Q_IMG} $i SECTORS)s"
+            debug "size     $(partition_query ${Q_IMG} $i SIZE)"
+            debug "name     $(partition_query ${Q_IMG} $i NAME)"
+            debug "uuid     $(partition_query ${Q_IMG} $i UUID)"
+            debug
+            ;;
+        *)
+            debug "Unexpected partition number $i."
+            exit -1
+            ;;
+        esac
+    done
+
+    # Verify that the partition is actually being expanded and not shrunk.
+    DISK_SIZE_CURRENT=$(stat -c "%s" ${Q_IMG})
+    if [ ${DISK_SIZE} -lt ${DISK_SIZE_CURRENT} ]
+    then
+        debug "The requested disk size ${DISK_SIZE} is less than the current disk size ${DISK_SIZE_CURRENT}."
+        help
+    fi
+
+    # Expand disk image file.
+    qemu-img resize -f raw ${Q_IMG} ${DISK_SIZE} 1>&2
+
+    # Expand partition.
+    DISK_SIZE_SECTORS=$(( ${DISK_SIZE} / ${SECTOR_SIZE} ))
+    DISK_END_SECTORS=$(( ${DISK_SIZE_SECTORS} - 1 )) # The minus 1 is because this is the last actual sector's number.
+    parted ${Q_IMG} resizepart 2 ${DISK_END_SECTORS}s
+
+    debug "Loop back disk."
     LOOPBACK=$(sudo losetup -f)
     sudo losetup -P $LOOPBACK $Q_IMG
     PART_BOOT=$(mktemp -d)
     PART_USER=$(mktemp -d)
+
+    function unloop_disks() {
+        debug "Unloop disk."
+        sudo losetup -d $LOOPBACK
+    }
+    trap unloop_disks EXIT
+
+    # Filesystem check before.
+    sudo e2fsck -f ${LOOPBACK}p2
+
+    # Expand filesystem.
+    sudo resize2fs ${LOOPBACK}p2
+
+    # Filesystem check and after.
+    sudo e2fsck -f ${LOOPBACK}p2
+
+    trap - EXIT
+    unloop_disks
+}
+
+function stage_mount() {
+    debug "Loop back disk."
+    LOOPBACK=$(sudo losetup -f)
+    sudo losetup -P $LOOPBACK $Q_IMG
+    PART_BOOT=$(mktemp -d)
+    PART_USER=$(mktemp -d)
+
+    function unloop_disks() {
+        debug "Unloop disk."
+        sudo losetup -d $LOOPBACK
+    }
+    trap unloop_disks EXIT
+
+    debug "Mount disk."
     sudo mount ${LOOPBACK}p1 $PART_BOOT
     sudo mount ${LOOPBACK}p2 $PART_USER
 
@@ -89,7 +213,8 @@ function stage_mount() {
         debug "Unmount disk."
         sudo umount $PART_BOOT
         sudo umount $PART_USER
-        sudo losetup -d $LOOPBACK
+
+        unloop_disks
     }
     trap unmount_disks EXIT
 
@@ -109,6 +234,9 @@ function stage_mount() {
     debug "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
     sudo cp $ROOT_DIR/mount/rc.local $PART_USER/etc/
+
+    trap - EXIT
+    unmount_disks
 }
 
 function stage_qemu() {
@@ -213,6 +341,9 @@ function stage_main() {
     case ${COMMAND} in
         prerequisites)
             stage_prerequisites $@
+            ;;
+        image)
+            stage_image $@
             ;;
         mount)
             stage_mount $@
