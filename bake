@@ -4,6 +4,9 @@ IFS=$'\n\t'
 
 ROOT_DIR="$(dirname $(readlink -f "${BASH_SOURCE[0]}"))"
 
+STATUS=$ROOT_DIR/.status
+RPIBAKE=rpibake
+
 source $ROOT_DIR/vars
 
 CLIENT_USER=pi
@@ -20,8 +23,10 @@ function help() {
     debug "bake"
     debug "  prerequisites      Install host system prerequisites to run QEMU."
     debug "  image"
-    debug "    expand BYTES     Expand the disk image to a given size in bytes."
-    debug "  mount              Mount the image and store SSH installer into image."
+    debug "    expand BYTES     Expand the image to a given size in bytes."
+    debug "    mount            Mount the image."
+    debug "    init             Store the SSH installer into image."
+    debug "    umount           Unmount the image."
     debug "  qemu               Run Raspberry Pi OS in QEMU."
     debug "  wait               Wait until SSH succeeds."
     debug "  ssh                SSH into the guest system."
@@ -33,6 +38,10 @@ function help() {
     debug "    ssh"
     debug "      origin         Get the SSH destination user@hostname."
     debug "      port           Get the SSH port."
+    debug "    mount"
+    debug "      loop           Get the loop device path if it exist."
+    debug "      boot           Get the mount location of the boot partition."
+    debug "      user           Get the mount location of the user partition."
     exit -1
 }
 
@@ -84,8 +93,27 @@ function partition_query() {
     trim "$(partx $IMG --bytes -g -n $PARTITION -o $FIELD)"
 }
 
+function image_variable_set() {
+    crudini --set $STATUS $RPIBAKE LOOPBACK $LOOPBACK
+    crudini --set $STATUS $RPIBAKE PART_BOOT $PART_BOOT
+    crudini --set $STATUS $RPIBAKE PART_USER $PART_USER
+}
+
+function image_variable_del() {
+    crudini --del $STATUS $RPIBAKE LOOPBACK
+    crudini --del $STATUS $RPIBAKE PART_BOOT
+    crudini --del $STATUS $RPIBAKE PART_USER
+}
+
+function image_variable_get() {
+    export LOOPBACK=$(crudini --get $STATUS $RPIBAKE LOOPBACK)
+    export PART_BOOT=$(crudini --get $STATUS $RPIBAKE PART_BOOT)
+    export PART_USER=$(crudini --get $STATUS $RPIBAKE PART_USER)
+}
+
 function stage_prerequisites() {
     sudo apt-get -y install \
+        crudini \
         qemu-system-arm \
         qemu-user \
     ;
@@ -101,6 +129,15 @@ function stage_image() {
     case ${COMMAND} in
         expand)
             stage_image_expand $@
+            ;;
+        mount)
+            stage_image_mount $@
+            ;;
+        init)
+            stage_image_init $@
+            ;;
+        umount)
+            stage_image_umount $@
             ;;
         *)
             debug "Unknown image command \"${COMMAND}\"."
@@ -167,14 +204,14 @@ function stage_image_expand() {
     DISK_END_SECTORS=$(( ${DISK_SIZE_SECTORS} - 1 )) # The minus 1 is because this is the last actual sector's number.
     parted ${Q_IMG} resizepart 2 ${DISK_END_SECTORS}s
 
-    debug "Loop back disk."
+    debug "Loop back image."
     LOOPBACK=$(sudo losetup -f)
     sudo losetup -P $LOOPBACK $Q_IMG
     PART_BOOT=$(mktemp -d)
     PART_USER=$(mktemp -d)
 
     function unloop_disks() {
-        debug "Unloop disk."
+        debug "Unloop image."
         sudo losetup -d $LOOPBACK
     }
     trap unloop_disks EXIT
@@ -192,32 +229,31 @@ function stage_image_expand() {
     unloop_disks
 }
 
-function stage_mount() {
-    debug "Loop back disk."
+function stage_image_mount() {
+    debug "Loop back image."
     LOOPBACK=$(sudo losetup -f)
     sudo losetup -P $LOOPBACK $Q_IMG
     PART_BOOT=$(mktemp -d)
     PART_USER=$(mktemp -d)
 
-    function unloop_disks() {
-        debug "Unloop disk."
+    function unloop_image() {
+        debug "Unloop image."
         sudo losetup -d $LOOPBACK
     }
-    trap unloop_disks EXIT
+    trap unloop_image EXIT
 
-    debug "Mount disk."
+    debug "Set mount information."
+    image_variable_set
+
+    debug "Mount image."
     sudo mount ${LOOPBACK}p1 $PART_BOOT
     sudo mount ${LOOPBACK}p2 $PART_USER
 
-    function unmount_disks() {
-        debug "Unmount disk."
-        sudo umount $PART_BOOT
-        sudo umount $PART_USER
+    trap - EXIT
+    # Don't run unloop_image.
+}
 
-        unloop_disks
-    }
-    trap unmount_disks EXIT
-
+function stage_image_init() {
     debug "Generate custom SSH key."
     if [[ -f .user/id_rsa ]]
     then
@@ -227,6 +263,8 @@ function stage_mount() {
         ssh-keygen -b 4096 -t rsa -f .user/id_rsa -q -N ""
     fi
 
+    image_variable_get
+
     debug "Install SSH keys."
     sudo mkdir -p $PART_USER/home/pi/.ssh
     sudo cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
@@ -234,9 +272,21 @@ function stage_mount() {
     debug "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
     sudo cp $ROOT_DIR/mount/rc.local $PART_USER/etc/
+}
 
-    trap - EXIT
-    unmount_disks
+function stage_image_umount() {
+    debug "Get mount information."
+    image_variable_get
+ 
+    debug "Unmount image."
+    sudo umount $PART_BOOT
+    sudo umount $PART_USER
+
+    debug "Unloop image."
+    sudo losetup -d $LOOPBACK
+
+    debug "Delete mount information."
+    image_variable_del
 }
 
 function stage_qemu() {
@@ -318,13 +368,38 @@ function stage_get() {
                     echo ${CLIENT_SSH_PORT}
                     ;;
                 *)
-                    debug "Unknown get ssh origin command \"${COMMAND}\"."
+                    debug "Unknown get ssh command \"${COMMAND}\"."
+                    help
+                    ;;
+            esac
+            ;;
+        mount)
+            if [ "$#" -lt 1 ]; then
+                debug "Missing get mount argument."
+                help
+            fi
+            COMMAND=$1
+            shift
+
+            image_variable_get
+            case ${COMMAND} in
+                loop)
+                    echo ${LOOPBACK}
+                    ;;
+                boot)
+                    echo ${PART_BOOT}
+                    ;;
+                user)
+                    echo ${PART_USER}
+                    ;;
+                *)
+                    debug "Unknown get mount command \"${COMMAND}\"."
                     help
                     ;;
             esac
             ;;
         *)
-            debug "Unknown get subcommand \"${COMMAND}\"."
+            debug "Unknown get command \"${COMMAND}\"."
             help
             ;;
     esac
@@ -344,9 +419,6 @@ function stage_main() {
             ;;
         image)
             stage_image $@
-            ;;
-        mount)
-            stage_mount $@
             ;;
         qemu)
             stage_qemu $@
