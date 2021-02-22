@@ -60,7 +60,7 @@ EOF
 function pipe_wait() {
     until pipe_ssh_exit
     do
-        true
+        sleep 1
     done
 }
 
