@@ -4,8 +4,6 @@
 
 [Download Raspberry Pi OS Lite](https://www.raspberrypi.org/downloads/raspberry-pi-os/) and extract the `*.img` file into the binaries folder.
 
-The items in the binary folder are from [this repository](https://github.com/dhruvvyas90/qemu-rpi-kernel).
-
 Set the variables in `vars` appropriately.
 
 #### Workflow
