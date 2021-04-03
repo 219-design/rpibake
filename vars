@@ -3,5 +3,3 @@ Q_KERNEL=kernel-qemu-4.19.50-buster
 Q_IMG_BASE=2021-01-11-raspios-buster-armhf-lite
 
 Q_HOST_SSH_PORT=5022
-Q_IDENTITY_SSH_PUBLIC=$ROOT_DIR/.user/id_rsa.pub
-Q_IDENTITY_SSH_PRIVATE=$ROOT_DIR/.user/id_rsa
