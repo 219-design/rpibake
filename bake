@@ -10,11 +10,11 @@ PI_UID=1000 # The user id of the regular Raspberry Pi user, pi.
 
 source $ROOT_DIR/vars
 
+Q_IMG=${ROOT_DIR}/binaries/${Q_IMG_BASE}.img
+
 CLIENT_USER=pi
 CLIENT_HOSTNAME=localhost
 CLIENT_SSH_ORIGIN=${CLIENT_USER}@${CLIENT_HOSTNAME}
-CLIENT_SSH_PORT=${Q_HOST_SSH_PORT}
-CLIENT_RSYNC_SSH_ORIGIN=${CLIENT_SSH_ORIGIN}
 
 function debug() {
     echo $@ 1>&2
@@ -51,7 +51,7 @@ function pipe_ssh() {
     ssh \
         ${CLIENT_SSH_ORIGIN} \
         -p ${Q_HOST_SSH_PORT} \
-        -i $Q_IDENTITY_SSH \
+        -i ${Q_IDENTITY_SSH_PRIVATE} \
         -o StrictHostKeyChecking=no \
         -o 'ConnectionAttempts 1000' \
         $@ \
@@ -75,7 +75,7 @@ function pipe_wait() {
 }
 
 function pipe_rsync_ssh() {
-    rsync -e "ssh -p ${CLIENT_SSH_PORT} -i ${Q_IDENTITY_SSH}" $@
+    rsync -e "ssh -p ${Q_HOST_SSH_PORT} -i ${Q_IDENTITY_SSH_PRIVATE}" $@
 }
 
 function trim() {
@@ -256,19 +256,19 @@ function stage_image_mount() {
 
 function stage_image_init() {
     debug "Generate custom SSH key."
-    if [[ -f .user/id_rsa ]]
+    if [[ -f ${Q_IDENTITY_SSH_PRIVATE} ]]
     then
         debug "Key exists, not regenerating."
     else
-        mkdir -p .user/
-        ssh-keygen -b 4096 -t rsa -f .user/id_rsa -q -N ""
+        mkdir -p $(mkdir ${Q_IDENTITY_SSH_PRIVATE})
+        ssh-keygen -b 4096 -t rsa -f ${Q_IDENTITY_SSH_PRIVATE} -q -N ""
     fi
 
     image_variable_get
 
     debug "Install SSH keys."
     sudo -u \#$PI_UID mkdir -p $PART_USER/home/pi/.ssh
-    sudo -u \#$PI_UID cp .user/id_rsa.pub $PART_USER/home/pi/.ssh/authorized_keys
+    sudo -u \#$PI_UID cp ${Q_IDENTITY_SSH_PUBLIC} $PART_USER/home/pi/.ssh/authorized_keys
 
     debug "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
@@ -300,8 +300,8 @@ function stage_qemu() {
         -net user,hostfwd=tcp::$Q_HOST_SSH_PORT-:22 \
         -net tap,ifname=vnet0,script=no,downscript=no \
         -drive file=$Q_IMG,format=raw \
-        -dtb $Q_DTB \
-        -kernel $Q_KERNEL \
+        -dtb ${ROOT_DIR}/qemu-rpi-kernel/${Q_DTB}.dtb \
+        -kernel ${ROOT_DIR}/qemu-rpi-kernel/${Q_KERNEL} \
         -no-reboot \
         $@ \
     ;
@@ -366,7 +366,7 @@ function stage_get() {
                     echo ${CLIENT_SSH_ORIGIN}
                     ;;
                 port)
-                    echo ${CLIENT_SSH_PORT}
+                    echo ${Q_HOST_SSH_PORT}
                     ;;
                 *)
                     debug "Unknown get ssh command \"${COMMAND}\"."
