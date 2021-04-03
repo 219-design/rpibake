@@ -1,5 +1,7 @@
-Q_DTB=${ROOT_DIR}/qemu-rpi-kernel/versatile-pb-buster-5.4.51.dtb
-Q_KERNEL=${ROOT_DIR}/qemu-rpi-kernel/kernel-qemu-4.19.50-buster
-Q_IMG=${ROOT_DIR}/binaries/2021-01-11-raspios-buster-armhf-lite.img
+Q_DTB=versatile-pb-buster-5.4.51
+Q_KERNEL=kernel-qemu-4.19.50-buster
+Q_IMG_BASE=2021-01-11-raspios-buster-armhf-lite
+
 Q_HOST_SSH_PORT=5022
-Q_IDENTITY_SSH=$ROOT_DIR/.user/id_rsa
+Q_IDENTITY_SSH_PUBLIC=$ROOT_DIR/.user/id_rsa.pub
+Q_IDENTITY_SSH_PRIVATE=$ROOT_DIR/.user/id_rsa
