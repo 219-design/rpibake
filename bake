@@ -39,19 +39,27 @@ function help() {
     debug "    ssh"
     debug "      origin         Get the SSH destination user@hostname."
     debug "      port           Get the SSH port."
+    debug "      public         Get the location of the public key used for SSH."
+    debug "      private        Get the location of the private key used for SSH."
     debug "    mount"
     debug "      loop           Get the loop device path if it exist."
     debug "      boot           Get the mount location of the boot partition."
     debug "      user           Get the mount location of the user partition."
+    debug "  set"
+    debug "    ssh"
+    debug "      public         Set the location of the public key used for SSH."
+    debug "      private        Set the location of the private key used for SSH."
     exit -1
 }
 
 function pipe_ssh() {
+    variable_get_ssh_private
+
     set +e
     ssh \
         ${CLIENT_SSH_ORIGIN} \
         -p ${Q_HOST_SSH_PORT} \
-        -i ${Q_IDENTITY_SSH_PRIVATE} \
+        -i ${SSH_PRIVATE} \
         -o StrictHostKeyChecking=no \
         -o 'ConnectionAttempts 1000' \
         $@ \
@@ -75,7 +83,8 @@ function pipe_wait() {
 }
 
 function pipe_rsync_ssh() {
-    rsync -e "ssh -p ${Q_HOST_SSH_PORT} -i ${Q_IDENTITY_SSH_PRIVATE}" $@
+    variable_get_ssh_private
+    rsync -e "ssh -p ${Q_HOST_SSH_PORT} -i ${SSH_PRIVATE}" $@
 }
 
 function trim() {
@@ -92,6 +101,24 @@ function partition_query() {
     PARTITION=$2
     FIELD=$3
     trim "$(partx $IMG --bytes -g -n $PARTITION -o $FIELD)"
+}
+
+function variable_set_ssh_public() {
+    crudini --set $STATUS $RPIBAKE SSH_PUBLIC $1
+}
+
+function variable_set_ssh_private() {
+    crudini --set $STATUS $RPIBAKE SSH_PRIVATE $1
+}
+
+function variable_get_ssh_public() {
+    (crudini --get --existing $STATUS $RPIBAKE SSH_PUBLIC > /dev/null) || (debug "Did you forget to set the ssh public key 'set ssh public'?"; exit 1)
+    export SSH_PUBLIC=$(crudini --get --existing $STATUS $RPIBAKE SSH_PUBLIC)
+}
+
+function variable_get_ssh_private() {
+    (crudini --get --existing $STATUS $RPIBAKE SSH_PRIVATE > /dev/null) || (debug "Did you forget to set the ssh private key 'set ssh private'?"; exit 1)
+    export SSH_PRIVATE=$(crudini --get --existing $STATUS $RPIBAKE SSH_PRIVATE)
 }
 
 function image_variable_set() {
@@ -255,20 +282,12 @@ function stage_image_mount() {
 }
 
 function stage_image_init() {
-    debug "Generate custom SSH key."
-    if [[ -f ${Q_IDENTITY_SSH_PRIVATE} ]]
-    then
-        debug "Key exists, not regenerating."
-    else
-        mkdir -p $(mkdir ${Q_IDENTITY_SSH_PRIVATE})
-        ssh-keygen -b 4096 -t rsa -f ${Q_IDENTITY_SSH_PRIVATE} -q -N ""
-    fi
-
+    variable_get_ssh_public
     image_variable_get
 
     debug "Install SSH keys."
     sudo -u \#$PI_UID mkdir -p $PART_USER/home/pi/.ssh
-    sudo -u \#$PI_UID cp ${Q_IDENTITY_SSH_PUBLIC} $PART_USER/home/pi/.ssh/authorized_keys
+    sudo -u \#$PI_UID cp ${SSH_PUBLIC} $PART_USER/home/pi/.ssh/authorized_keys
 
     debug "Install SSH server installer."
     sudo mv $PART_USER/etc/rc.local $PART_USER/etc/rc.local.original
@@ -368,6 +387,14 @@ function stage_get() {
                 port)
                     echo ${Q_HOST_SSH_PORT}
                     ;;
+                public)
+                    variable_get_ssh_public
+                    echo ${SSH_PUBLIC}
+                    ;;
+                private)
+                    variable_get_ssh_private
+                    echo ${SSH_PRIVATE}
+                    ;;
                 *)
                     debug "Unknown get ssh command \"${COMMAND}\"."
                     help
@@ -406,6 +433,44 @@ function stage_get() {
     esac
 }
 
+function stage_set() {
+    if [ "$#" -lt 1 ]; then
+        debug "Missing set argument."
+        help
+    fi
+    COMMAND=$1
+    shift
+    case ${COMMAND} in
+        ssh)
+            if [ "$#" -lt 1 ]; then
+                debug "Missing set ssh argument."
+                help
+            fi
+            COMMAND=$1
+            shift
+            case ${COMMAND} in
+                public)
+                    ARG=$1
+                    shift
+                    variable_set_ssh_public $ARG
+                    ;;
+                private)
+                    ARG=$1
+                    shift
+                    variable_set_ssh_private $ARG
+                    ;;
+                *)
+                    debug "Unknown set ssh command \"${COMMAND}\"."
+                    help
+                    ;;
+            esac
+            ;;
+        *)
+            debug "Unknown set command \"${COMMAND}\"."
+            help
+            ;;
+    esac
+}
 
 function stage_main() {
     if [ "$#" -lt 1 ]; then
@@ -438,6 +503,9 @@ function stage_main() {
             ;;
         get)
             stage_get $@
+            ;;
+        set)
+            stage_set $@
             ;;
         *)
             debug "Unknown command \"${COMMAND}\"."
