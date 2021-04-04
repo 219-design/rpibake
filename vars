@@ -1,5 +1,5 @@
 Q_DTB=versatile-pb-buster-5.4.51
 Q_KERNEL=kernel-qemu-4.19.50-buster
-Q_IMG_BASE=2021-01-11-raspios-buster-armhf-lite
+Q_IMG_URL=https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2021-03-25/2021-03-04-raspios-buster-armhf-lite.zip
 
 Q_HOST_SSH_PORT=5022

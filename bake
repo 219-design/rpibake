@@ -10,6 +10,7 @@ PI_UID=1000 # The user id of the regular Raspberry Pi user, pi.
 
 source $ROOT_DIR/vars
 
+Q_IMG_BASE=$(basename -- ${Q_IMG_URL} .zip)
 Q_IMG=${ROOT_DIR}/binaries/${Q_IMG_BASE}.img
 
 CLIENT_USER=pi
@@ -24,6 +25,7 @@ function help() {
     debug "bake"
     debug "  prerequisites      Install host system prerequisites to run QEMU."
     debug "  image"
+    debug "    reset            Download the image specified in the configuration and reset local changes."
     debug "    expand BYTES     Expand the image to a given size in bytes."
     debug "    mount            Mount the image."
     debug "    init             Store the SSH installer into image."
@@ -155,6 +157,9 @@ function stage_image() {
     COMMAND=$1
     shift
     case ${COMMAND} in
+        reset)
+            stage_image_reset $@
+            ;;
         expand)
             stage_image_expand $@
             ;;
@@ -172,6 +177,27 @@ function stage_image() {
             help
             ;;
     esac
+}
+
+function stage_image_reset() {
+    if [ ! -f "${HOME}/RaspberryPiOS/${Q_IMG_BASE}.img" ]
+    then
+        mkdir -p "${HOME}/RaspberryPiOS"
+        pushd "${HOME}/RaspberryPiOS" >& /dev/null
+            debug "Download ${Q_IMG_URL}"
+            wget --continue "${Q_IMG_URL}"
+
+            debug "Unzip ${Q_IMG_BASE}.img"
+            time unzip "${Q_IMG_BASE}.zip"
+        popd >& /dev/null
+    fi
+
+    debug "Copy ${Q_IMG_BASE}.img"
+    mkdir -p "${ROOT_DIR}/binaries"
+    pushd "${ROOT_DIR}/binaries" >& /dev/null
+        rm -f "${Q_IMG_BASE}.img"
+        time cp "${HOME}/RaspberryPiOS/${Q_IMG_BASE}.img" .
+    popd >& /dev/null
 }
 
 function stage_image_expand() {
