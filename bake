@@ -10,12 +10,12 @@ PI_UID=1000 # The user id of the regular Raspberry Pi user, pi.
 
 source $ROOT_DIR/vars
 
-Q_IMG_BASE=$(basename -- ${Q_IMG_URL} .zip)
+Q_IMG_BASENAME=$(basename -- ${Q_IMG_URL})
+Q_IMG_EXTENSION="${Q_IMG_BASENAME#*.}"
+Q_IMG_BASE=$(basename -- ${Q_IMG_URL} .${Q_IMG_EXTENSION})
 Q_IMG=${ROOT_DIR}/binaries/${Q_IMG_BASE}.img
 
-CLIENT_USER=pi
 CLIENT_HOSTNAME=localhost
-CLIENT_SSH_ORIGIN=${CLIENT_USER}@${CLIENT_HOSTNAME}
 
 function debug() {
     echo $@ 1>&2
@@ -23,43 +23,46 @@ function debug() {
 
 function help() {
     debug "bake"
-    debug "  prerequisites      Install host system prerequisites to run QEMU."
+    debug "  prerequisites          Install host system prerequisites to run QEMU."
     debug "  image"
-    debug "    reset            Download the image specified in the configuration and reset local changes."
-    debug "    expand BYTES     Expand the image to a given size in bytes."
-    debug "    mount            Mount the image."
-    debug "    init             Store the SSH installer into image."
-    debug "    umount           Unmount the image."
-    debug "  qemu               Run Raspberry Pi OS in QEMU."
-    debug "  wait               Wait until SSH succeeds."
-    debug "  ssh                SSH into the guest system."
+    debug "    reset                Download the image specified in the configuration and reset local changes."
+    debug "    expand BYTES         Expand the image to a given size in bytes."
+    debug "    mount                Mount the image."
+    debug "    init                 Store the SSH installer into image."
+    debug "    umount               Unmount the image."
+    debug "    userpass USER PASS   Configure autoconfiguration to create user with password."
+    debug "  qemu                   Run Raspberry Pi OS in QEMU."
+    debug "  wait                   Wait until SSH succeeds."
+    debug "  ssh                    SSH into the guest system."
     debug "  rsync"
-    debug "    ssh              Invoke rsync over SSH."
-    debug "  halt               SSH into the guest system and turn it off."
+    debug "    ssh                  Invoke rsync over SSH."
+    debug "  halt                   SSH into the guest system and turn it off."
     debug "  get"
-    debug "    user             Get the client user name."
+    debug "    user                 Get the client user name."
     debug "    ssh"
-    debug "      origin         Get the SSH destination user@hostname."
-    debug "      port           Get the SSH port."
-    debug "      public         Get the location of the public key used for SSH."
-    debug "      private        Get the location of the private key used for SSH."
+    debug "      origin             Get the SSH destination user@hostname."
+    debug "      port               Get the SSH port."
+    debug "      public             Get the location of the public key used for SSH."
+    debug "      private            Get the location of the private key used for SSH."
     debug "    mount"
-    debug "      loop           Get the loop device path if it exist."
-    debug "      boot           Get the mount location of the boot partition."
-    debug "      user           Get the mount location of the user partition."
+    debug "      loop               Get the loop device path if it exist."
+    debug "      boot               Get the mount location of the boot partition."
+    debug "      user               Get the mount location of the user partition."
     debug "  set"
+    debug "    user                 Set the client user name."
     debug "    ssh"
-    debug "      public         Set the location of the public key used for SSH."
-    debug "      private        Set the location of the private key used for SSH."
+    debug "      public FILE        Set the location of the public key used for SSH."
+    debug "      private FILE       Set the location of the private key used for SSH."
     exit -1
 }
 
 function pipe_ssh() {
     variable_get_ssh_private
+    variable_get_client_user
 
     set +e
     ssh \
-        ${CLIENT_SSH_ORIGIN} \
+        ${CLIENT_USER}@${CLIENT_HOSTNAME} \
         -p ${Q_HOST_SSH_PORT} \
         -i ${SSH_PRIVATE} \
         -o StrictHostKeyChecking=no \
@@ -113,6 +116,10 @@ function variable_set_ssh_private() {
     crudini --set $STATUS $RPIBAKE SSH_PRIVATE $1
 }
 
+function variable_set_user() {
+    crudini --set $STATUS $RPIBAKE CLIENT_USER $1
+}
+
 function variable_get_ssh_public() {
     (crudini --get --existing $STATUS $RPIBAKE SSH_PUBLIC > /dev/null) || (debug "Did you forget to set the ssh public key 'set ssh public'?"; exit 1)
     export SSH_PUBLIC=$(crudini --get --existing $STATUS $RPIBAKE SSH_PUBLIC)
@@ -121,6 +128,15 @@ function variable_get_ssh_public() {
 function variable_get_ssh_private() {
     (crudini --get --existing $STATUS $RPIBAKE SSH_PRIVATE > /dev/null) || (debug "Did you forget to set the ssh private key 'set ssh private'?"; exit 1)
     export SSH_PRIVATE=$(crudini --get --existing $STATUS $RPIBAKE SSH_PRIVATE)
+}
+
+function variable_get_client_user() {
+    if crudini --get --existing $STATUS $RPIBAKE CLIENT_USER >& /dev/null
+    then
+        export CLIENT_USER=$(crudini --get --existing $STATUS $RPIBAKE CLIENT_USER)
+    else
+        export CLIENT_USER=pi
+    fi
 }
 
 function image_variable_set() {
@@ -146,6 +162,7 @@ function stage_prerequisites() {
         crudini \
         qemu-system-arm \
         qemu-user \
+        xz-utils \
     ;
 }
 
@@ -172,6 +189,9 @@ function stage_image() {
         umount)
             stage_image_umount $@
             ;;
+        userpass)
+            stage_image_userpass $@
+            ;;
         *)
             debug "Unknown image command \"${COMMAND}\"."
             help
@@ -187,8 +207,19 @@ function stage_image_reset() {
             debug "Download ${Q_IMG_URL}"
             wget --continue "${Q_IMG_URL}"
 
-            debug "Unzip ${Q_IMG_BASE}.img"
-            time unzip "${Q_IMG_BASE}.zip"
+            case "${Q_IMG_EXTENSION}" in
+                zip)
+                    debug "Unzip ${Q_IMG_BASE}.img"
+                    time unzip "${Q_IMG_BASE}.zip"
+                    ;;
+                img.xz)
+                    debug "Decompress ${Q_IMG_BASE}.img"
+                    time unxz -k "${Q_IMG_BASE}.img.xz"
+                    ;;
+                *)
+                    debug "Unandled image file extension ${Q_IMG_EXTENSION}"
+                    exit -1
+            esac
         popd >& /dev/null
     fi
 
@@ -335,6 +366,23 @@ function stage_image_umount() {
     image_variable_del
 }
 
+function stage_image_userpass() {
+    if [ "$#" -lt 2 ]; then
+        debug "Missing user or password arguments."
+        help
+    fi
+
+    local NEW_USER=$1
+    local NEW_PASSWD=$2
+    shift 2
+
+    debug "Configuring new user."
+    image_variable_get
+    echo | sudo tee -a $PART_BOOT/userconf <<EOF
+$NEW_USER:$NEW_PASSWD
+EOF
+}
+
 function stage_qemu() {
     sudo qemu-system-arm \
         -M versatilepb \
@@ -397,6 +445,7 @@ function stage_get() {
     shift
     case ${COMMAND} in
         user)
+            variable_get_client_user
             echo ${CLIENT_USER}
             ;;
         ssh)
@@ -408,7 +457,8 @@ function stage_get() {
             shift
             case ${COMMAND} in
                 origin)
-                    echo ${CLIENT_SSH_ORIGIN}
+                    variable_get_client_user
+                    echo ${CLIENT_USER}@${CLIENT_HOSTNAME}
                     ;;
                 port)
                     echo ${Q_HOST_SSH_PORT}
@@ -467,6 +517,15 @@ function stage_set() {
     COMMAND=$1
     shift
     case ${COMMAND} in
+        user)
+            if [ "$#" -lt 1 ]; then
+                debug "Missing set user argument."
+                help
+            fi
+            ARG=$1
+            shift
+            variable_set_user $ARG
+            ;;
         ssh)
             if [ "$#" -lt 1 ]; then
                 debug "Missing set ssh argument."
@@ -476,11 +535,19 @@ function stage_set() {
             shift
             case ${COMMAND} in
                 public)
+                    if [ "$#" -lt 1 ]; then
+                        debug "Missing set ssh public argument."
+                        help
+                    fi
                     ARG=$1
                     shift
                     variable_set_ssh_public $ARG
                     ;;
                 private)
+                    if [ "$#" -lt 1 ]; then
+                        debug "Missing set ssh private argument."
+                        help
+                    fi
                     ARG=$1
                     shift
                     variable_set_ssh_private $ARG
