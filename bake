@@ -32,6 +32,8 @@ function help() {
     debug "    umount               Unmount the image."
     debug "    userpass USER PASS   Configure autoconfiguration to create user with password."
     debug "  qemu                   Run Raspberry Pi OS in QEMU."
+    debug "    versatile            Run with a more generic arm1176 configuration."
+    debug "    raspi3b              Run QEMU with a Raspberru Pi 3 Model B native emulation configuration."
     debug "  wait                   Wait until SSH succeeds."
     debug "  ssh                    SSH into the guest system."
     debug "  rsync"
@@ -48,11 +50,17 @@ function help() {
     debug "      loop               Get the loop device path if it exist."
     debug "      boot               Get the mount location of the boot partition."
     debug "      user               Get the mount location of the user partition."
+    debug "    native"
+    debug "      kernel             Get the kernel file to use with native emulation."
+    debug "      dtb                Get the device tree binary file to use with native emulation."
     debug "  set"
     debug "    user                 Set the client user name."
     debug "    ssh"
     debug "      public FILE        Set the location of the public key used for SSH."
     debug "      private FILE       Set the location of the private key used for SSH."
+    debug "    native"
+    debug "      kernel FILE        Set the kernel file to use with native emulation."
+    debug "      dtb FILE           Set the device tree binary file to use with native emulation."
     exit -1
 }
 
@@ -120,6 +128,14 @@ function variable_set_user() {
     crudini --set $STATUS $RPIBAKE CLIENT_USER $1
 }
 
+function variable_set_native_kernel() {
+    crudini --set $STATUS $RPIBAKE NATIVE_KERNEL $1
+}
+
+function variable_set_native_dtb() {
+    crudini --set $STATUS $RPIBAKE NATIVE_DTB $1
+}
+
 function variable_get_ssh_public() {
     (crudini --get --existing $STATUS $RPIBAKE SSH_PUBLIC > /dev/null) || (debug "Did you forget to set the ssh public key 'set ssh public'?"; exit 1)
     export SSH_PUBLIC=$(crudini --get --existing $STATUS $RPIBAKE SSH_PUBLIC)
@@ -137,6 +153,16 @@ function variable_get_client_user() {
     else
         export CLIENT_USER=pi
     fi
+}
+
+function variable_get_native_kernel() {
+    (crudini --get --existing $STATUS $RPIBAKE NATIVE_KERNEL > /dev/null) || (debug "Did you forget to set the native kernel 'set native kernel'?"; exit 1)
+    export NATIVE_KERNEL=$(crudini --get --existing $STATUS $RPIBAKE NATIVE_KERNEL)
+}
+
+function variable_get_native_dtb() {
+    (crudini --get --existing $STATUS $RPIBAKE NATIVE_DTB > /dev/null) || (debug "Did you forget to set the native dtb 'set native dtb'?"; exit 1)
+    export NATIVE_DTB=$(crudini --get --existing $STATUS $RPIBAKE NATIVE_DTB)
 }
 
 function image_variable_set() {
@@ -160,8 +186,6 @@ function image_variable_get() {
 function stage_prerequisites() {
     sudo apt-get -y install \
         crudini \
-        qemu-system-arm \
-        qemu-user \
         xz-utils \
     ;
 }
@@ -383,7 +407,10 @@ $NEW_USER:$NEW_PASSWD
 EOF
 }
 
-function stage_qemu() {
+function stage_qemu_versatile() {
+    # The maximum number of CPUs is 1.
+    # The maximum amount of memory is 256MB.
+    # iperf reports a network throughput of ~25 Mbits/sec.
     sudo qemu-system-arm \
         -M versatilepb \
         -cpu arm1176 \
@@ -398,6 +425,53 @@ function stage_qemu() {
         -no-reboot \
         $@ \
     ;
+}
+
+function stage_qemu_raspi3b() {
+    variable_get_native_kernel
+    variable_get_native_dtb
+
+    # iperf reports a network throughput of ~600-850 Kbits/sec.
+    sudo qemu-system-aarch64 \
+        -M raspi3b \
+        -append "rw earlyprintk loglevel=8 console=ttyAMA0,115200 dwc_otg.lpm_enable=0 root=/dev/mmcblk0p2 rootdelay=1" \
+        -kernel "${NATIVE_KERNEL}" \
+        -dtb "${NATIVE_DTB}" \
+        -sd "${Q_IMG}" \
+        -m 1G \
+        -smp 4 \
+        -serial stdio \
+        -usb \
+        -device usb-mouse \
+        -device usb-kbd \
+        -device usb-net,netdev=net0 \
+        -device usb-net,netdev=net1 \
+        -netdev user,id=net0,hostfwd=tcp::$Q_HOST_SSH_PORT-:22 \
+        -netdev tap,id=net1,script=no,downscript=no \
+        -no-reboot \
+        $@ \
+    ;
+}
+
+function stage_qemu() {
+    if [ "$#" -lt 1 ]; then
+        debug "Missing qemu argument."
+        help
+    fi
+    COMMAND=$1
+    shift
+    case ${COMMAND} in
+        versatile)
+            stage_qemu_versatile $@
+            ;;
+        raspi3b)
+            stage_qemu_raspi3b $@
+            ;;
+        *)
+            debug "Unknown qemu command \"${COMMAND}\"."
+            help
+            ;;
+    esac
 }
 
 function stage_wait() {
@@ -502,6 +576,29 @@ function stage_get() {
                     ;;
             esac
             ;;
+        native)
+            if [ "$#" -lt 1 ]; then
+                debug "Missing get native argument."
+                help
+            fi
+            COMMAND=$1
+            shift
+
+            case ${COMMAND} in
+                kernel)
+                    variable_get_native_kernel
+                    echo ${NATIVE_KERNEL}
+                    ;;
+                dtb)
+                    variable_get_native_dtb
+                    echo ${NATIVE_DTB}
+                    ;;
+                *)
+                    debug "Unknown get native command \"${COMMAND}\"."
+                    help
+                    ;;
+            esac
+            ;;
         *)
             debug "Unknown get command \"${COMMAND}\"."
             help
@@ -554,6 +651,41 @@ function stage_set() {
                     ;;
                 *)
                     debug "Unknown set ssh command \"${COMMAND}\"."
+                    help
+                    ;;
+            esac
+            ;;
+        native)
+            if [ "$#" -lt 1 ]; then
+                debug "Missing set native argument."
+                help
+            fi
+            COMMAND=$1
+            shift
+
+            case ${COMMAND} in
+                kernel)
+                    if [ "$#" -lt 1 ]; then
+                        debug "Missing set native kernel argument."
+                        help
+                    fi
+                    COMMAND=$1
+                    shift
+
+                    variable_set_native_kernel $COMMAND
+                    ;;
+                dtb)
+                    if [ "$#" -lt 1 ]; then
+                        debug "Missing set native kernel dtb."
+                        help
+                    fi
+                    COMMAND=$1
+                    shift
+
+                    variable_set_native_dtb $COMMAND
+                    ;;
+                *)
+                    debug "Unknown get native command \"${COMMAND}\"."
                     help
                     ;;
             esac
