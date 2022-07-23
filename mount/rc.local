@@ -3,6 +3,11 @@ set -euo pipefail
 IFS=$'\n\t'
 
 echo "Install SSH server."
+# Automatically upgrading now can prevent issues with upgrading
+# after SSH configurations are modified later.
+apt-get update
+# apt-get upgrade -y
+# apt-get dist-upgrade -y
 apt-get install -y openssh-server
 
 echo "Open port to handle SSH."
