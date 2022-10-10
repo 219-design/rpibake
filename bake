@@ -188,6 +188,24 @@ function stage_prerequisites() {
         crudini \
         xz-utils \
     ;
+    case $(lsb_release --short --id) in
+    "Ubuntu")
+        local release=$(lsb_release --short --release)
+        local major=$(echo $release | cut -f 1 -d '.')
+        local minor=$(echo $release | cut -f 2 -d '.')
+        if [[ ( "$major" -ge "22" && "$minor" -ge "4" ) || "$major" -gt "22" ]]
+        then
+            sudo apt-get -y install \
+                qemu-utils \
+                qemu-system-arm \
+                qemu-system-aarch64 \
+            ;
+        else
+            debug "This version of Ubuntu may not have QEMU 6.2.0 or later available via a repository."
+            debug "QEMU will not be installed automatically."
+        fi
+        ;;
+    esac
 }
 
 function stage_image() {
