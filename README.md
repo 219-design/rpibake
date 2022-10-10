@@ -6,7 +6,7 @@ Run `./bake` for more information.
 
 ## Requirements
 
-[QEMU](https://www.qemu.org/) version 6.2.0 or greater.
+[QEMU](https://www.qemu.org/) version 6.2.0 or greater. This can be installed for Ubuntu 22.04 or later with `./bake prerequisites`.
 
 ## Example Workflow
 
@@ -20,7 +20,7 @@ Set your SSH keys manually.
 Create a script to generate a configured disk image.
 
 ```bash
-./bake prerequisites # Install pre-requisites other than QEMU.
+./bake prerequisites # Install pre-requisites other than possibly QEMU.
 ./bake get ssh public # Verify that this has been set by the user.
 ./bake get ssh private # Verify that this has been set by the user.
 ./bake image reset # Pull a Raspberry Pi OS image and overwrite any dirtied copy.
